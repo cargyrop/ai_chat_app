@@ -385,6 +385,52 @@
     margin: 0; border: none; border-radius: 0; padding: 12px; overflow-x: auto;
   }
 
+  /* ── Deep Thinking & Live Execution Actions Component ─────────────────── */
+  .action-ticker {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--accent2);
+    font-size: 12px; font-weight: 500; padding: 6px 12px; border-radius: var(--radius-sm);
+    display: flex; align-items: center; gap: 8px; width: fit-content; margin-bottom: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2); animation: pulse 2s infinite;
+  }
+  .ticker-spinner { font-size: 14px; animation: rotate 1.5s linear infinite; display: inline-block; }
+  @keyframes rotate { 0% { transform: rotate(0deg) } 100% { transform: rotate(360deg) } }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.7 } }
+
+  .thinking-container {
+    background: #11131a; border: 1px solid #2e364f; border-radius: var(--radius);
+    overflow: hidden; width: 100%; margin-bottom: 8px; transition: all 0.2s ease-in-out;
+  }
+  .thinking-header {
+    background: #161923; padding: 8px 14px; display: flex; justify-content: space-between;
+    align-items: center; cursor: pointer; user-select: none; border-bottom: 1px solid #2e364f;
+    transition: background 0.15s;
+  }
+  .thinking-header:hover { background: #1c202d; }
+  .thinking-status { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: #a5b4fc; }
+  .thinking-spinner { font-size: 14px; }
+  .thinking-header .thinking-spinner.active { animation: blink 1.2s infinite; }
+  .thinking-toggle-btn { font-size: 11px; color: var(--text-muted); transition: transform 0.2s; }
+
+  .thinking-content {
+    padding: 12px 14px; max-height: 500px; overflow-y: auto; background: #0b0d14;
+    font-family: var(--font-mono); font-size: 12px; color: #94a3b8; line-height: 1.6;
+    transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s;
+  }
+  .thinking-content pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+  .thinking-content code { background: none; padding: 0; color: inherit; font-family: inherit; font-size: inherit; }
+
+  .thinking-container.collapsed .thinking-header { border-bottom: none; }
+  .thinking-container.collapsed .thinking-content { max-height: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; }
+  .thinking-container.collapsed .thinking-toggle-btn { transform: rotate(-90deg); }
+
+  #thinking-toggle-box {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text-muted); padding: 6px 10px; border-radius: var(--radius-sm);
+    cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; user-select: none; transition: all 0.15s;
+  }
+  #thinking-toggle-box:hover { border-color: var(--accent); color: var(--text); }
+  #thinking-toggle-box input { cursor: pointer; accent-color: var(--accent); }
+
   /* Toast */
   #toast {
     position: fixed; bottom: 24px; right: 24px; z-index: 999;
@@ -444,6 +490,10 @@
       </select>
       <button id="refresh-btn" onclick="loadModels()" title="Refresh model list">⟳ Refresh</button>
       <button id="system-btn" onclick="openSystemModal()">⚙ System prompt</button>
+      <label id="thinking-toggle-box" title="Force any model to conduct step-by-step real-time Chain of Thought consideration before answering">
+        <input type="checkbox" id="enable-thinking-cb">
+        <span>⚡ Deep Thinking</span>
+      </label>
       <button class="toolbar-action-btn" onclick="clearCurrentChat()" title="Clear active chat messages">🗑️ Clear</button>
       <button class="toolbar-action-btn" onclick="exportCurrentChat()" title="Export chat to Markdown">📥 Export</button>
       <span class="model-count" id="model-count"></span>
@@ -587,6 +637,7 @@ let currentConvId = null;
 let systemPrompt = localStorage.getItem('systemPrompt') || '';
 let streaming = false;
 let activeAbortController = null;
+let deepThinkingEnabled = localStorage.getItem('deepThinkingEnabled') === 'true';
 
 const PROVIDERS = [
   { id: 'anthropic',  label: 'Anthropic',   icon: '🟠', placeholder: 'sk-ant-...' },
@@ -604,6 +655,17 @@ window.addEventListener('DOMContentLoaded', () => {
   buildKeysList();
   checkOllama();
   if (systemPrompt) document.getElementById('system-prompt-input').value = systemPrompt;
+
+  const thinkingCb = document.getElementById('enable-thinking-cb');
+  if (thinkingCb) {
+    thinkingCb.checked = deepThinkingEnabled;
+    thinkingCb.onchange = (e) => {
+      deepThinkingEnabled = e.target.checked;
+      localStorage.setItem('deepThinkingEnabled', deepThinkingEnabled);
+      toast(deepThinkingEnabled ? 'Deep Thinking Enabled ⚡' : 'Deep Thinking Disabled', 'ok');
+    };
+  }
+
   if (conversations.length === 0) newConversation(false);
   else loadConversation(conversations[0].id);
 });
@@ -893,12 +955,12 @@ function renderMessages(msgs) {
   for (let i = 0; i < msgs.length; i++) {
     const msg = msgs[i];
     const modelInfo = msg.model ? msg.model : null;
-    appendMessage(msg.role, msg.content, false, modelInfo, i);
+    appendMessage(msg.role, msg.content, false, modelInfo, i, msg.thinking, msg.thinkingTime);
   }
   scrollBottom();
 }
 
-function appendMessage(role, content, animate = true, model = null, msgIdx = null) {
+function appendMessage(role, content, animate = true, model = null, msgIdx = null, thinking = null, thinkingTime = null) {
   const container = document.getElementById('messages');
   const empty = document.getElementById('empty-state');
   if (empty) empty.remove();
@@ -917,6 +979,24 @@ function appendMessage(role, content, animate = true, model = null, msgIdx = nul
     bubbleContent += `<span class="model-label">${providerIcon} ${escHtml(modelName)}</span>`;
   }
 
+  // Thinking box (if present)
+  let thinkingHtml = '';
+  if (role === 'assistant' && thinking && thinking.trim()) {
+    thinkingHtml = `
+      <div class="thinking-container permanent-thinking">
+        <div class="thinking-header" onclick="toggleThinking(this)">
+          <div class="thinking-status">
+            <span class="thinking-spinner">🧠</span>
+            <span class="thinking-title">Real-time Chain of Thought (${thinkingTime ? thinkingTime + 's' : 'Considered'})</span>
+          </div>
+          <span class="thinking-toggle-btn">▼</span>
+        </div>
+        <div class="thinking-content">
+          <pre><code>${escHtml(thinking.trim())}</code></pre>
+        </div>
+      </div>`;
+  }
+
   // Action buttons bar
   let actionsHtml = `<div class="msg-actions">`;
   if (role === 'user') {
@@ -930,6 +1010,7 @@ function appendMessage(role, content, animate = true, model = null, msgIdx = nul
   div.innerHTML = `
     <div class="msg-avatar">${avatar}</div>
     <div class="msg-bubble-container">
+      ${thinkingHtml}
       <div class="msg-bubble">${bubbleContent}</div>
       ${msgIdx !== null ? actionsHtml : ''}
     </div>`;
@@ -944,9 +1025,34 @@ function appendTypingBubble() {
   if (empty) empty.remove();
   const div = document.createElement('div');
   div.className = 'message assistant';
-  div.id = 'typing-bubble';
+  div.id = 'active-assistant-message';
   div.innerHTML = `<div class="msg-avatar">✦</div>
-    <div class="msg-bubble-container"><div class="msg-bubble"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div></div>`;
+    <div class="msg-bubble-container" id="active-assistant-container">
+      <!-- Live Action Ticker -->
+      <div id="live-action-ticker" class="action-ticker">
+        <span class="ticker-spinner">⚙️</span>
+        <span id="action-ticker-text">Executing: Handshaking with AI provider API...</span>
+      </div>
+
+      <!-- Live Real-Time Thoughts Box -->
+      <div id="live-thinking-container" class="thinking-container" style="display: none;">
+        <div class="thinking-header" onclick="toggleThinking(this)">
+          <div class="thinking-status">
+            <span class="thinking-spinner active">⚡</span>
+            <span class="thinking-title">Real-time Chain of Thought (<span id="thinking-timer">0.0s</span>)</span>
+          </div>
+          <span class="thinking-toggle-btn">▼</span>
+        </div>
+        <div class="thinking-content" id="thinking-scroll-box">
+          <pre><code id="thinking-content-text"></code></pre>
+        </div>
+      </div>
+
+      <!-- Main Live Final Text Answer Bubble -->
+      <div class="msg-bubble" id="live-answer-bubble" style="display: none;">
+        <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+      </div>
+    </div>`;
   container.appendChild(div);
   scrollBottom();
   return div;
@@ -958,6 +1064,38 @@ function scrollBottom() {
 }
 
 /* ── Send message ───────────────────────────────────────────────────────────── */
+function extractThinkAndClean(raw) {
+  let clean = '';
+  let think = '';
+  let currentlyInThink = false;
+
+  let pos = 0;
+  while (pos < raw.length) {
+    if (!currentlyInThink) {
+      const startIdx = raw.indexOf('<think>', pos);
+      if (startIdx === -1) {
+        clean += raw.slice(pos);
+        break;
+      } else {
+        clean += raw.slice(pos, startIdx);
+        pos = startIdx + 7;
+        currentlyInThink = true;
+      }
+    } else {
+      const endIdx = raw.indexOf('</think>', pos);
+      if (endIdx === -1) {
+        think += raw.slice(pos);
+        break;
+      } else {
+        think += raw.slice(pos, endIdx);
+        pos = endIdx + 8;
+        currentlyInThink = false;
+      }
+    }
+  }
+  return { clean, think, currentlyInThink };
+}
+
 async function sendMessage() {
   if (streaming) return;
   const input = document.getElementById('msg-input');
@@ -978,15 +1116,39 @@ async function sendMessage() {
   appendMessage('user', text, true, null, conv.messages.length - 1);
 
   const typingDiv = appendTypingBubble();
+  const actionTickerText = document.getElementById('action-ticker-text');
+  const thinkingContainer = document.getElementById('live-thinking-container');
+  const thinkingTimerEl = document.getElementById('thinking-timer');
+  const thinkingContentText = document.getElementById('thinking-content-text');
+  const thinkingScrollBox = document.getElementById('thinking-scroll-box');
+  const answerBubble = document.getElementById('live-answer-bubble');
+
   document.getElementById('send-btn').style.display = 'none';
   if (document.getElementById('stop-btn')) document.getElementById('stop-btn').style.display = 'flex';
   streaming = true;
 
   activeAbortController = new AbortController();
 
-  let assistantText = '';
-  const bubble = typingDiv.querySelector('.msg-bubble');
+  let totalRawContent = '';
+  let dedicatedReasoning = '';
+  let thinkingStartTime = null;
+  let thinkingTimerInterval = null;
+  let hasCollapsedThinking = false;
   let streamError = '';
+
+  // Start live thinking timer
+  thinkingTimerInterval = setInterval(() => {
+    if (thinkingStartTime && thinkingTimerEl) {
+      thinkingTimerEl.textContent = ((Date.now() - thinkingStartTime) / 1000).toFixed(1) + 's';
+    }
+  }, 100);
+
+  const isThinkingChecked = document.getElementById('enable-thinking-cb')?.checked;
+  let dynamicSystemPrompt = systemPrompt;
+  if (isThinkingChecked && currentModel.provider !== 'anthropic') {
+    const addCoT = "You are an analytical AI. Before providing your final polished response, you must conduct a thorough, real-time step-by-step Chain of Thought considerations and problem analysis. You MUST output your real-time internal calculations and considerations inside <think>...</think> tags. Once your internal considerations are complete, output your final response outside those tags.";
+    dynamicSystemPrompt = dynamicSystemPrompt ? dynamicSystemPrompt + '\n\n' + addCoT : addCoT;
+  }
 
   try {
     const r = await fetch('/api/chat', {
@@ -996,7 +1158,8 @@ async function sendMessage() {
         provider: currentModel.provider,
         model: currentModel.id,
         messages: conv.messages.slice(0, -1).concat([{ role: 'user', content: text }]),
-        systemPrompt,
+        systemPrompt: dynamicSystemPrompt,
+        enableThinking: isThinkingChecked
       }),
       signal: activeAbortController.signal
     });
@@ -1019,7 +1182,9 @@ async function sendMessage() {
           const d = JSON.parse(line.slice(6));
           if (d.error) {
             streamError = d.error;
-            bubble.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(d.error)}</span>`;
+            if (actionTickerText) actionTickerText.textContent = '❌ Execution Error';
+            answerBubble.style.display = 'block';
+            answerBubble.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(d.error)}</span>`;
             scrollBottom();
             break;
           }
@@ -1031,10 +1196,43 @@ async function sendMessage() {
             saveConversations();
             updateTokenCounterUI();
           }
+
+          if (d.reasoning) {
+            dedicatedReasoning += d.reasoning;
+            if (!thinkingStartTime) thinkingStartTime = Date.now();
+          }
           if (d.text) {
-            assistantText += d.text;
-            bubble.innerHTML = formatMd(assistantText);
-            scrollBottom();
+            totalRawContent += d.text;
+            if (actionTickerText && !totalRawContent) {
+              actionTickerText.textContent = '📥 Stream active. Receiving tokens...';
+            }
+          }
+
+          // Compute Think and Clean
+          const { clean, think, currentlyInThink } = extractThinkAndClean(totalRawContent);
+          const liveThink = (dedicatedReasoning + (think ? '\n' + think : '')).trim();
+          const liveClean = clean.trim();
+
+          // Update Thinking UI
+          if (liveThink || currentlyInThink) {
+            if (!thinkingStartTime) thinkingStartTime = Date.now();
+            if (thinkingContainer) thinkingContainer.style.display = 'block';
+            if (thinkingContentText) thinkingContentText.textContent = liveThink;
+            if (thinkingScrollBox) thinkingScrollBox.scrollTop = thinkingScrollBox.scrollHeight;
+            if (actionTickerText) actionTickerText.textContent = '💡 Executing: Real-time deeper consideration & analysis...';
+          }
+
+          // Update Clean UI
+          if (liveClean || (!currentlyInThink && liveClean.length > 0)) {
+            if (answerBubble) answerBubble.style.display = 'block';
+            if (answerBubble) answerBubble.innerHTML = formatMd(liveClean);
+            if (actionTickerText) actionTickerText.textContent = '📝 Executing: Formatting final polished Markdown response...';
+
+            // Auto collapse thinking once main answer is smoothly flowing
+            if (thinkingContainer && !currentlyInThink && liveThink && !hasCollapsedThinking && liveClean.length > 30) {
+              thinkingContainer.classList.add('collapsed');
+              hasCollapsedThinking = true;
+            }
           }
         } catch { /* skip partial json */ }
       }
@@ -1044,33 +1242,54 @@ async function sendMessage() {
     if (e.name === 'AbortError') {
       streamError = 'Stopped by user';
     } else {
-      bubble.innerHTML = `<span style="color:var(--red)">Network error: ${escHtml(e.message)}</span>`;
+      if (actionTickerText) actionTickerText.textContent = '❌ Network Connection Error';
+      answerBubble.style.display = 'block';
+      answerBubble.innerHTML = `<span style="color:var(--red)">Network error: ${escHtml(e.message)}</span>`;
       streamError = e.message;
     }
   }
 
-  typingDiv.removeAttribute('id');
-  if (assistantText) {
-    if (streamError === 'Stopped by user') {
-      assistantText += '\n\n*[Stopped by user]*';
-    }
-    // Store model info with the message
-    const modelInfo = { ...currentModel };
-    const modelObj = models.find(m => m.id === currentModel.id && m.provider === currentModel.provider);
-    if (modelObj) {
-      modelInfo.icon = modelObj.icon || '';
-      modelInfo.name = modelObj.name || modelObj.id;
-    }
-    conv.messages.push({ role: 'assistant', content: assistantText, model: modelInfo });
-    saveConversations();
-    const newBubble = appendMessage('assistant', assistantText, false, modelInfo, conv.messages.length - 1);
-    typingDiv.replaceWith(newBubble);
-  } else if (streamError) {
-    conv.messages.push({ role: 'assistant', content: '[Error: ' + streamError + ']' });
-    saveConversations();
-    const errBubble = appendMessage('assistant', '[Error: ' + streamError + ']', false, null, conv.messages.length - 1);
-    typingDiv.replaceWith(errBubble);
+  // Finalize
+  if (thinkingTimerInterval) {
+    clearInterval(thinkingTimerInterval);
+    thinkingTimerInterval = null;
   }
+  const thinkingFinalDuration = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : 0;
+  if (actionTickerText) actionTickerText.textContent = '✅ Action completed successfully';
+  setTimeout(() => { document.getElementById('live-action-ticker')?.remove(); }, 1200);
+
+  const { clean: finalCleanParsed, think: finalThinkParsed } = extractThinkAndClean(totalRawContent);
+  const finalLiveThink = (dedicatedReasoning + (finalThinkParsed ? '\n' + finalThinkParsed : '')).trim();
+  let finalLiveClean = finalCleanParsed.trim();
+
+  if (streamError === 'Stopped by user') {
+    finalLiveClean += '\n\n*[Stopped by user]*';
+  } else if (streamError && !finalLiveClean) {
+    finalLiveClean = '[Error: ' + streamError + ']';
+  } else if (!finalLiveClean && finalLiveThink) {
+    finalLiveClean = '*[Chain of Thought completed. No final summary provided]*';
+  }
+
+  const modelInfo = { ...currentModel };
+  const modelObj = models.find(m => m.id === currentModel.id && m.provider === currentModel.provider);
+  if (modelObj) {
+    modelInfo.icon = modelObj.icon || '';
+    modelInfo.name = modelObj.name || modelObj.id;
+  }
+
+  const finalMsgObj = {
+    role: 'assistant',
+    content: finalLiveClean,
+    thinking: finalLiveThink,
+    thinkingTime: thinkingFinalDuration,
+    model: modelInfo
+  };
+
+  conv.messages.push(finalMsgObj);
+  saveConversations();
+
+  const newBubble = appendMessage('assistant', finalMsgObj.content, false, modelInfo, conv.messages.length - 1, finalMsgObj.thinking, finalMsgObj.thinkingTime);
+  document.getElementById('active-assistant-message')?.replaceWith(newBubble);
 
   document.getElementById('send-btn').style.display = 'flex';
   if (document.getElementById('stop-btn')) document.getElementById('stop-btn').style.display = 'none';
@@ -1190,6 +1409,12 @@ function saveSystemPrompt() {
 }
 
 /* ── Custom Interactive Actions (Copy, Edit, Regenerate, Stop) ──────────── */
+function toggleThinking(el) {
+  const container = el.closest('.thinking-container');
+  if (!container) return;
+  container.classList.toggle('collapsed');
+}
+
 function stopGenerating() {
   if (activeAbortController) {
     activeAbortController.abort();

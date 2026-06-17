@@ -372,10 +372,13 @@ app.post('/api/chat', async (req, res) => {
     if (provider === 'anthropic') {
       const body = {
         model,
-        max_tokens: 4096,
+        max_tokens: req.body.enableThinking ? 8192 : 4096,
         stream: true,
         messages: messages.filter(m => m.role !== 'system'),
       };
+      if (req.body.enableThinking && model === 'claude-3-7-sonnet-20250219') {
+        body.thinking = { type: 'enabled', budget_tokens: 4096 };
+      }
       if (safeSystemPrompt) body.system = safeSystemPrompt;
 
       const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -404,7 +407,10 @@ app.post('/api/chat', async (req, res) => {
             if (d.type === 'message_delta' && d.usage?.output_tokens) {
               completionTokens = d.usage.output_tokens || 0;
             }
-            if (d.type === 'content_block_delta' && d.delta?.text) {
+            if (d.type === 'content_block_delta' && d.delta?.type === 'thinking_delta' && d.delta?.thinking) {
+              send({ reasoning: d.delta.thinking });
+            }
+            if (d.type === 'content_block_delta' && d.delta?.type === 'text_delta' && d.delta?.text) {
               const txt = d.delta.text;
               assistantAnswer += txt;
               send({ text: txt });
@@ -415,11 +421,12 @@ app.post('/api/chat', async (req, res) => {
       }
       reportUsageAndFinish();
 
-    } else if (provider === 'openai' || provider === 'groq' || provider === 'openrouter') {
+    } else if (provider === 'openai' || provider === 'groq' || provider === 'openrouter' || provider === 'deepseek') {
       const endpoints = {
         openai:     'https://api.openai.com/v1/chat/completions',
         groq:       'https://api.groq.com/openai/v1/chat/completions',
         openrouter: 'https://openrouter.ai/api/v1/chat/completions',
+        deepseek:   'https://api.deepseek.com/v1/chat/completions',
       };
       const msgs = safeSystemPrompt
         ? [{ role: 'system', content: safeSystemPrompt }, ...messages]
@@ -453,6 +460,10 @@ app.post('/api/chat', async (req, res) => {
             if (d.usage) {
               promptTokens = d.usage.prompt_tokens || 0;
               completionTokens = d.usage.completion_tokens || 0;
+            }
+            const reasoningTxt = d.choices?.[0]?.delta?.reasoning_content || d.choices?.[0]?.delta?.reasoning || d.choices?.[0]?.delta?.reasoning_text;
+            if (reasoningTxt) {
+              send({ reasoning: reasoningTxt });
             }
             const txt = d.choices?.[0]?.delta?.content;
             if (txt) {
