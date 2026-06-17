@@ -7,12 +7,15 @@ const { exec } = require('child_process');
 const app = express();
 const PORT = 3737;
 const DATA_FILE = path.join(__dirname, 'data', 'config.json');
-const ALLOWED_PROVIDERS = new Set(['anthropic', 'openai', 'gemini', 'groq', 'openrouter']);
+const ALLOWED_PROVIDERS = new Set(['anthropic', 'openai', 'gemini', 'groq', 'openrouter', 'deepseek']);
 const GEMINI_FALLBACK_MODELS = [
+  { id: 'gemini-2.0-flash',      name: 'Gemini 2.0 Flash' },
+  { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite' },
+  { id: 'gemini-2.0-pro-exp',    name: 'Gemini 2.0 Pro Exp' },
+  { id: 'gemini-1.5-flash',      name: 'Gemini 1.5 Flash' },
+  { id: 'gemini-1.5-pro',        name: 'Gemini 1.5 Pro' },
   { id: 'gemini-3.5-flash',      name: 'Gemini 3.5 Flash' },
   { id: 'gemini-2.5-flash',      name: 'Gemini 2.5 Flash' },
-  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite' },
-  { id: 'gemini-2.5-pro',        name: 'Gemini 2.5 Pro' },
 ];
 
 app.use(cors({
@@ -120,10 +123,11 @@ app.get('/api/models', async (req, res) => {
     // Evolve to empower any capable/modern AI provider model
     if (provider === 'gemini') return true;
     if (provider === 'anthropic') return true;
-    if (provider === 'openai') return /gpt-4|o1|o3/i.test(full);
+    if (provider === 'openai') return /gpt-4|o1|o3|gpt-4\.5/i.test(full);
     if (provider === 'groq') return /70b|deepseek|3\.3|mixtral/i.test(full);
     if (provider === 'openrouter') return /sonnet|opus|gpt-4|o1|o3|gemini|70b|405b|deepseek|coder/i.test(full);
     if (provider === 'ollama') return /70b|deepseek|qwen|coder|llama3\.3|phi4/i.test(full);
+    if (provider === 'deepseek') return true;
     return true;
   };
 
@@ -197,6 +201,11 @@ app.get('/api/models', async (req, res) => {
       } while (pageToken);
 
       const preferredOrder = [
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-lite',
+        'gemini-2.0-pro-exp',
+        'gemini-1.5-flash',
+        'gemini-1.5-pro',
         'gemini-3.5-flash',
         'gemini-3.1-pro',
         'gemini-3-flash',
@@ -270,6 +279,28 @@ app.get('/api/models', async (req, res) => {
     }
   }
 
+  // DeepSeek
+  if (keys.deepseek) {
+    try {
+      const r = await fetch('https://api.deepseek.com/models', {
+        headers: { Authorization: `Bearer ${keys.deepseek}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        (data.data || [])
+          .forEach(m => models.push({ id: m.id, name: prettyModelName(m.id), provider: 'deepseek', icon: '🐳' }));
+      } else {
+        throw new Error('DeepSeek fetch failed');
+      }
+    } catch {
+      models.push(
+        { id: 'deepseek-chat',     name: 'DeepSeek V3 (Chat)',    provider: 'deepseek', icon: '🐳' },
+        { id: 'deepseek-reasoner', name: 'DeepSeek R1 (Reasoner)', provider: 'deepseek', icon: '🐳' }
+      );
+    }
+  }
+
   // Ollama (local)
   try {
     const r = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(1500) });
@@ -297,7 +328,7 @@ app.post('/api/chat', async (req, res) => {
   const cfg = loadConfig();
   const keys = cfg.keys || {};
 
-  if (!['anthropic', 'openai', 'gemini', 'groq', 'openrouter', 'ollama'].includes(provider)) {
+  if (!['anthropic', 'openai', 'gemini', 'groq', 'openrouter', 'ollama', 'deepseek'].includes(provider)) {
     return res.status(400).json({ error: 'unknown provider' });
   }
   if (!model || typeof model !== 'string') return res.status(400).json({ error: 'model required' });
@@ -534,7 +565,13 @@ app.post('/api/update', async (req, res) => {
   // Step 1: backup
   notify('📦 Creating timestamped backup of current files...');
   try {
-    fs.cpSync(appDir, backupDir, { recursive: true });
+    fs.cpSync(appDir, backupDir, {
+      recursive: true,
+      filter: (src) => {
+        const basename = path.basename(src);
+        return !['node_modules', '.git', 'data', '.arena', '.cache'].includes(basename);
+      }
+    });
     notify(`✅ Backup successfully saved to: ${backupDir}`);
   } catch (err) {
     send({ type: 'error', message: `Backup failed: ${err.message}` });
@@ -625,11 +662,12 @@ OUTPUT RULES:
         }
       }
 
-    } else if (provider === 'openai' || provider === 'groq' || provider === 'openrouter') {
+    } else if (provider === 'openai' || provider === 'groq' || provider === 'openrouter' || provider === 'deepseek') {
       const endpoints = {
         openai:     'https://api.openai.com/v1/chat/completions',
         groq:       'https://api.groq.com/openai/v1/chat/completions',
         openrouter: 'https://openrouter.ai/api/v1/chat/completions',
+        deepseek:   'https://api.deepseek.com/v1/chat/completions',
       };
       const r = await fetch(endpoints[provider], {
         method: 'POST',
@@ -747,6 +785,16 @@ OUTPUT RULES:
 
     function extractJsonArray(text) {
       let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+      // Try finding markdown json blocks
+      const mdMatch = cleaned.match(/```json\s*(\[\s*\{[\s\S]*\}\s*\])\s*```/);
+      if (mdMatch) {
+        try {
+          const parsed = JSON.parse(mdMatch[1]);
+          if (Array.isArray(parsed)) return parsed;
+        } catch { /* skip */ }
+      }
+
       const firstIdx = cleaned.indexOf('[');
       const lastIdx = cleaned.lastIndexOf(']');
       if (firstIdx !== -1 && lastIdx !== -1 && lastIdx >= firstIdx) {
