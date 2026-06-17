@@ -27,7 +27,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 // -- Config persistence --------------------------------------------------------
 function loadConfig() {
   if (!fs.existsSync(DATA_FILE)) return { keys: {}, conversations: [] };
-  try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); }
+  try {
+    const cfg = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    if (cfg?.keys) {
+      for (const [k, v] of Object.entries(cfg.keys)) {
+        if (!v || v === 'ENTER_YOUR_API_KEY' || v.includes('••••')) delete cfg.keys[k];
+      }
+    }
+    return cfg;
+  }
   catch { return { keys: {}, conversations: [] }; }
 }
 function saveConfig(cfg) {
@@ -106,13 +114,27 @@ app.get('/api/models', async (req, res) => {
   const keys = cfg.keys || {};
   const models = [];
 
+  // Helper to determine if a model is capable of self-updating (~70KB code / structured JSON)
+  const isUpdateCapable = (provider, id, name = '') => {
+    const full = `${id} ${name}`.toLowerCase();
+    // Evolve to empower any capable/modern AI provider model
+    if (provider === 'gemini') return true;
+    if (provider === 'anthropic') return true;
+    if (provider === 'openai') return /gpt-4|o1|o3/i.test(full);
+    if (provider === 'groq') return /70b|deepseek|3\.3|mixtral/i.test(full);
+    if (provider === 'openrouter') return /sonnet|opus|gpt-4|o1|o3|gemini|70b|405b|deepseek|coder/i.test(full);
+    if (provider === 'ollama') return /70b|deepseek|qwen|coder|llama3\.3|phi4/i.test(full);
+    return true;
+  };
+
   // Anthropic
   if (keys.anthropic) {
     models.push(
-      { id: 'claude-fable-5',     name: 'Claude Fable 5',     provider: 'anthropic', icon: '[A]' },
-      { id: 'claude-opus-4-8',    name: 'Claude Opus 4.8',    provider: 'anthropic', icon: '[A]' },
-      { id: 'claude-sonnet-4-6',  name: 'Claude Sonnet 4.6',  provider: 'anthropic', icon: '[A]' },
-      { id: 'claude-haiku-4-5',   name: 'Claude Haiku 4.5',   provider: 'anthropic', icon: '[A]' },
+      { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', provider: 'anthropic', icon: '🟠' },
+      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', provider: 'anthropic', icon: '🟠' },
+      { id: 'claude-3-opus-20240229',    name: 'Claude 3 Opus',     provider: 'anthropic', icon: '🟠' },
+      { id: 'claude-3-5-haiku-20241022',  name: 'Claude 3.5 Haiku',  provider: 'anthropic', icon: '🟠' },
+      { id: 'claude-sonnet-4-6',          name: 'Claude Sonnet 4.6 (Legacy)', provider: 'anthropic', icon: '🟠' },
     );
   }
 
@@ -129,10 +151,19 @@ app.get('/api/models', async (req, res) => {
           .filter(m => m.id.startsWith('gpt') || /^o\d/.test(m.id))
           .filter(m => !/image|audio|realtime|transcribe|tts|embedding|moderation/i.test(m.id))
           .sort((a, b) => b.created - a.created)
-          .slice(0, 12);
-        chat.forEach(m => models.push({ id: m.id, name: m.id, provider: 'openai', icon: '[O]' }));
+          .slice(0, 15);
+        chat.forEach(m => models.push({ id: m.id, name: m.id, provider: 'openai', icon: '🟢' }));
+      } else {
+        throw new Error('OpenAI fetch failed');
       }
-    } catch { /* skip */ }
+    } catch {
+      models.push(
+        { id: 'gpt-4o',         name: 'GPT-4o',         provider: 'openai', icon: '🟢' },
+        { id: 'gpt-4o-mini',    name: 'GPT-4o mini',    provider: 'openai', icon: '🟢' },
+        { id: 'o1',             name: 'o1',             provider: 'openai', icon: '🟢' },
+        { id: 'o3-mini',        name: 'o3-mini',        provider: 'openai', icon: '🟢' }
+      );
+    }
   }
 
   // Google Gemini
@@ -159,7 +190,7 @@ app.get('/api/models', async (req, res) => {
               id,
               name: m.displayName || prettyModelName(id),
               provider: 'gemini',
-              icon: '[G]',
+              icon: '🔵',
             });
           });
         pageToken = data.nextPageToken || '';
@@ -180,10 +211,10 @@ app.get('/api/models', async (req, res) => {
         if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
         return a.name.localeCompare(b.name);
       });
-      models.push(...discovered.slice(0, 12));
+      models.push(...discovered.slice(0, 15));
     } catch {
       GEMINI_FALLBACK_MODELS.forEach(m =>
-        models.push({ ...m, provider: 'gemini', icon: '[G]' })
+        models.push({ ...m, provider: 'gemini', icon: '🔵' })
       );
     }
   }
@@ -199,9 +230,18 @@ app.get('/api/models', async (req, res) => {
         const data = await r.json();
         data.data
           .filter(m => !/whisper|tts|audio|embedding|guard|moderation/i.test(m.id))
-          .forEach(m => models.push({ id: m.id, name: m.id, provider: 'groq', icon: '[Q]' }));
+          .forEach(m => models.push({ id: m.id, name: m.id, provider: 'groq', icon: '⚡' }));
+      } else {
+        throw new Error('Groq fetch failed');
       }
-    } catch { /* skip */ }
+    } catch {
+      models.push(
+        { id: 'llama-3.3-70b-versatile',       name: 'Llama 3.3 70B',       provider: 'groq', icon: '⚡' },
+        { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 70B',     provider: 'groq', icon: '⚡' },
+        { id: 'llama-3.1-8b-instant',          name: 'Llama 3.1 8B',        provider: 'groq', icon: '⚡' },
+        { id: 'mixtral-8x7b-32768',            name: 'Mixtral 8x7B',        provider: 'groq', icon: '⚡' }
+      );
+    }
   }
 
   // OpenRouter
@@ -217,15 +257,15 @@ app.get('/api/models', async (req, res) => {
       (data.data || [])
         .filter(m => preferred.some(prefix => m.id?.startsWith(prefix)))
         .filter(m => !/image|audio|embedding|moderation|tts|whisper/i.test(`${m.id} ${m.name}`))
-        .slice(0, 20)
-        .forEach(m => models.push({ id: m.id, provider: 'openrouter', name: `${m.name || m.id} (OR)`, icon: '[R]' }));
+        .slice(0, 25)
+        .forEach(m => models.push({ id: m.id, provider: 'openrouter', name: `${m.name || m.id} (OR)`, icon: '🌐' }));
     } catch {
       models.push(
-        { id: 'openai/gpt-4o',                    provider: 'openrouter', name: 'GPT-4o (via OpenRouter)',       icon: '[R]' },
-        { id: 'anthropic/claude-sonnet-4',         provider: 'openrouter', name: 'Claude Sonnet 4 (OR)',          icon: '[R]' },
-        { id: 'google/gemini-2.5-flash',           provider: 'openrouter', name: 'Gemini 2.5 Flash (OR)',        icon: '[R]' },
-        { id: 'meta-llama/llama-3.3-70b-instruct', provider: 'openrouter', name: 'Llama 3.3 70B (OR)',           icon: '[R]' },
-        { id: 'deepseek/deepseek-chat',            provider: 'openrouter', name: 'DeepSeek Chat (OR)',           icon: '[R]' },
+        { id: 'openai/gpt-4o',                    provider: 'openrouter', name: 'GPT-4o (via OpenRouter)',       icon: '🌐' },
+        { id: 'anthropic/claude-sonnet-4',         provider: 'openrouter', name: 'Claude Sonnet 4 (OR)',          icon: '🌐' },
+        { id: 'google/gemini-2.5-flash',           provider: 'openrouter', name: 'Gemini 2.5 Flash (OR)',        icon: '🌐' },
+        { id: 'meta-llama/llama-3.3-70b-instruct', provider: 'openrouter', name: 'Llama 3.3 70B (OR)',           icon: '🌐' },
+        { id: 'deepseek/deepseek-chat',            provider: 'openrouter', name: 'DeepSeek Chat (OR)',           icon: '🌐' },
       );
     }
   }
@@ -236,10 +276,15 @@ app.get('/api/models', async (req, res) => {
     if (r.ok) {
       const data = await r.json();
       (data.models || []).forEach(m =>
-        models.push({ id: m.name, name: m.name, provider: 'ollama', icon: '[L]', local: true })
+        models.push({ id: m.name, name: m.name, provider: 'ollama', icon: '🦙', local: true })
       );
     }
   } catch { /* Ollama not running */ }
+
+  // Apply updateCapable flag
+  models.forEach(m => {
+    m.updateCapable = isUpdateCapable(m.provider, m.id, m.name);
+  });
 
   res.json(models);
 });
@@ -264,6 +309,33 @@ app.post('/api/chat', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let assistantAnswer = '';
+  let usageReported = false;
+
+  const reportUsageAndFinish = () => {
+    if (usageReported) return;
+    usageReported = true;
+
+    if (promptTokens === 0) {
+      const promptText = safeSystemPrompt + ' ' + messages.map(m => m.content).join(' ');
+      promptTokens = Math.max(1, Math.round(promptText.length / 4));
+    }
+    if (completionTokens === 0) {
+      completionTokens = Math.max(1, Math.round(assistantAnswer.length / 4));
+    }
+    send({
+      type: 'usage',
+      usage: {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens
+      }
+    });
+    send({ done: true });
+  };
 
   try {
     if (provider === 'anthropic') {
@@ -295,11 +367,22 @@ app.post('/api/chat', async (req, res) => {
           if (!line.startsWith('data: ')) continue;
           try {
             const d = JSON.parse(line.slice(6));
-            if (d.type === 'content_block_delta' && d.delta?.text) send({ text: d.delta.text });
-            if (d.type === 'message_stop') send({ done: true });
+            if (d.type === 'message_start' && d.message?.usage) {
+              promptTokens = d.message.usage.input_tokens || 0;
+            }
+            if (d.type === 'message_delta' && d.usage?.output_tokens) {
+              completionTokens = d.usage.output_tokens || 0;
+            }
+            if (d.type === 'content_block_delta' && d.delta?.text) {
+              const txt = d.delta.text;
+              assistantAnswer += txt;
+              send({ text: txt });
+            }
+            if (d.type === 'message_stop') reportUsageAndFinish();
           } catch { /* skip */ }
         }
       }
+      reportUsageAndFinish();
 
     } else if (provider === 'openai' || provider === 'groq' || provider === 'openrouter') {
       const endpoints = {
@@ -318,7 +401,12 @@ app.post('/api/chat', async (req, res) => {
           'Content-Type': 'application/json',
           ...(provider === 'openrouter' ? { 'HTTP-Referer': 'http://localhost:3737' } : {}),
         },
-        body: JSON.stringify({ model, messages: msgs, stream: true }),
+        body: JSON.stringify({
+          model,
+          messages: msgs,
+          stream: true,
+          stream_options: { include_usage: true }
+        }),
         signal: AbortSignal.timeout(120000),
       });
       if (!r.ok) {
@@ -331,12 +419,20 @@ app.post('/api/chat', async (req, res) => {
           if (!line.startsWith('data: ') || line.includes('[DONE]')) continue;
           try {
             const d = JSON.parse(line.slice(6));
-            const text = d.choices?.[0]?.delta?.content;
-            if (text) send({ text });
-            if (d.choices?.[0]?.finish_reason) send({ done: true });
+            if (d.usage) {
+              promptTokens = d.usage.prompt_tokens || 0;
+              completionTokens = d.usage.completion_tokens || 0;
+            }
+            const txt = d.choices?.[0]?.delta?.content;
+            if (txt) {
+              assistantAnswer += txt;
+              send({ text: txt });
+            }
+            if (d.choices?.[0]?.finish_reason) reportUsageAndFinish();
           } catch { /* skip */ }
         }
       }
+      reportUsageAndFinish();
 
     } else if (provider === 'gemini') {
       const msgs = messages.map(m => ({
@@ -361,12 +457,20 @@ app.post('/api/chat', async (req, res) => {
           if (!line.startsWith('data: ')) continue;
           try {
             const d = JSON.parse(line.slice(6));
-            const text = d.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (text) send({ text });
-            if (d.candidates?.[0]?.finishReason) send({ done: true });
+            if (d.usageMetadata) {
+              promptTokens = d.usageMetadata.promptTokenCount || 0;
+              completionTokens = d.usageMetadata.candidatesTokenCount || 0;
+            }
+            const txt = d.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (txt) {
+              assistantAnswer += txt;
+              send({ text: txt });
+            }
+            if (d.candidates?.[0]?.finishReason) reportUsageAndFinish();
           } catch { /* skip */ }
         }
       }
+      reportUsageAndFinish();
 
     } else if (provider === 'ollama') {
       const msgs = safeSystemPrompt
@@ -387,11 +491,18 @@ app.post('/api/chat', async (req, res) => {
         for (const line of lines) {
           try {
             const d = JSON.parse(line);
-            if (d.message?.content) send({ text: d.message.content });
-            if (d.done) send({ done: true });
+            if (d.prompt_eval_count) promptTokens = d.prompt_eval_count;
+            if (d.eval_count) completionTokens = d.eval_count;
+            if (d.message?.content) {
+              const txt = d.message.content;
+              assistantAnswer += txt;
+              send({ text: txt });
+            }
+            if (d.done) reportUsageAndFinish();
           } catch { /* skip */ }
         }
       }
+      reportUsageAndFinish();
     } else {
       send({ error: `Unknown provider: ${provider}` });
     }
@@ -401,10 +512,18 @@ app.post('/api/chat', async (req, res) => {
   res.end();
 });
 
-// -- Self-update ---------------------------------------------------------------
+// -- Self-update (with live real-time SSE feedback) ----------------------------
 app.post('/api/update', async (req, res) => {
-  const { featureRequest } = req.body;
+  const { featureRequest, provider, model } = req.body;
   if (!featureRequest) return res.status(400).json({ error: 'featureRequest required' });
+  if (!provider || !model) return res.status(400).json({ error: 'provider and model required for updates' });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+  const notify = (msg) => send({ type: 'info', message: msg });
 
   const appDir = __dirname;
   const parentDir = path.dirname(appDir);
@@ -413,17 +532,21 @@ app.post('/api/update', async (req, res) => {
   const backupDir = path.join(parentDir, `${appName}-backup-${timestamp}`);
 
   // Step 1: backup
+  notify('📦 Creating timestamped backup of current files...');
   try {
     fs.cpSync(appDir, backupDir, { recursive: true });
+    notify(`✅ Backup successfully saved to: ${backupDir}`);
   } catch (err) {
-    return res.status(500).json({ error: `Backup failed: ${err.message}` });
+    send({ type: 'error', message: `Backup failed: ${err.message}` });
+    return res.end();
   }
 
-  // Step 2: call Claude to generate the patch
+  // Step 2: verify API key if not ollama
   const cfg = loadConfig();
-  const anthropicKey = cfg.keys?.anthropic;
-  if (!anthropicKey) {
-    return res.status(400).json({ error: 'An Anthropic API key is required for the update feature. Add one in Settings.' });
+  const keys = cfg.keys || {};
+  if (provider !== 'ollama' && !keys[provider]) {
+    send({ type: 'error', message: `A valid ${provider} API key is required in Settings.` });
+    return res.end();
   }
 
   // Read current file contents
@@ -440,10 +563,14 @@ app.post('/api/update', async (req, res) => {
   };
 
   let files;
-  try { files = readDir(appDir); } catch (e) {
-    return res.status(500).json({ error: `Could not read app files: ${e.message}` });
+  try {
+    files = readDir(appDir);
+  } catch (e) {
+    send({ type: 'error', message: `Could not read app files: ${e.message}` });
+    return res.end();
   }
 
+  notify(`🤖 Evolving codebase (${files.length} files) via ${provider} (${model})...`);
   const filesDump = files.map(f => `=== FILE: ${f.path} ===\n${f.content}`).join('\n\n');
 
   const prompt = `You are an expert Node.js / HTML / CSS / JS developer. You are given the full source code of a local AI chat application and a feature request. Your job is to output a JSON array of file patches to apply.
@@ -461,52 +588,213 @@ OUTPUT RULES:
 - Use the same code style as the existing files.`;
 
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': anthropicKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 8000,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-      signal: AbortSignal.timeout(180000),
-    });
+    let rawText = '';
 
-    if (!r.ok) {
-      return res.status(500).json({ error: `Claude API error: ${await readErrorMessage(r, 'Claude request failed')}`, backupDir });
+    if (provider === 'anthropic') {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': keys.anthropic,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 8192,
+          stream: true,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+        signal: AbortSignal.timeout(180000),
+      });
+      if (!r.ok) {
+        send({ type: 'error', message: `Anthropic API error: ${await readErrorMessage(r, 'Update failed')}` });
+        return res.end();
+      }
+      for await (const chunk of r.body) {
+        const lines = Buffer.from(chunk).toString().split('\n');
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const d = JSON.parse(line.slice(6));
+            if (d.type === 'content_block_delta' && d.delta?.text) {
+              const txt = d.delta.text;
+              rawText += txt;
+              send({ type: 'progress', text: txt });
+            }
+          } catch { /* skip */ }
+        }
+      }
+
+    } else if (provider === 'openai' || provider === 'groq' || provider === 'openrouter') {
+      const endpoints = {
+        openai:     'https://api.openai.com/v1/chat/completions',
+        groq:       'https://api.groq.com/openai/v1/chat/completions',
+        openrouter: 'https://openrouter.ai/api/v1/chat/completions',
+      };
+      const r = await fetch(endpoints[provider], {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${keys[provider]}`,
+          'Content-Type': 'application/json',
+          ...(provider === 'openrouter' ? { 'HTTP-Referer': 'http://localhost:3737' } : {}),
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          stream: true
+        }),
+        signal: AbortSignal.timeout(180000),
+      });
+      if (!r.ok) {
+        send({ type: 'error', message: `${provider} API error: ${await readErrorMessage(r, 'Update failed')}` });
+        return res.end();
+      }
+      for await (const chunk of r.body) {
+        const lines = Buffer.from(chunk).toString().split('\n');
+        for (const line of lines) {
+          if (!line.startsWith('data: ') || line.includes('[DONE]')) continue;
+          try {
+            const d = JSON.parse(line.slice(6));
+            const txt = d.choices?.[0]?.delta?.content;
+            if (txt) {
+              rawText += txt;
+              send({ type: 'progress', text: txt });
+            }
+          } catch { /* skip */ }
+        }
+      }
+
+    } else if (provider === 'gemini') {
+      const executeGeminiUpdateStream = async (targetModel) => {
+        let textResult = '';
+        const r = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:streamGenerateContent?key=${keys.gemini}&alt=sse`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ text: prompt }] }]
+            }),
+            signal: AbortSignal.timeout(180000)
+          }
+        );
+        if (!r.ok) {
+          const msg = await readErrorMessage(r, 'Gemini API error');
+          throw new Error(explainProviderError('gemini', msg));
+        }
+        for await (const chunk of r.body) {
+          const lines = Buffer.from(chunk).toString().split('\n');
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const d = JSON.parse(line.slice(6));
+              const txt = d.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (txt) {
+                textResult += txt;
+                send({ type: 'progress', text: txt });
+              }
+            } catch { /* skip */ }
+          }
+        }
+        return textResult;
+      };
+
+      try {
+        rawText = await executeGeminiUpdateStream(model);
+      } catch (err) {
+        if (err.message.includes('high demand') || err.message.includes('overloaded') || err.message.includes('429') || err.message.includes('503') || err.message.includes('400')) {
+          notify(`⚠️ ${model} overloaded (${err.message}). Self-healing: retrying with stable gemini-1.5-flash...`);
+          rawText = await executeGeminiUpdateStream('gemini-1.5-flash');
+        } else {
+          throw err;
+        }
+      }
+
+    } else if (provider === 'ollama') {
+      const r = await fetch('http://localhost:11434/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          stream: true
+        }),
+        signal: AbortSignal.timeout(180000)
+      });
+      if (!r.ok) {
+        send({ type: 'error', message: 'Ollama local update request failed' });
+        return res.end();
+      }
+      for await (const chunk of r.body) {
+        const lines = Buffer.from(chunk).toString().split('\n').filter(Boolean);
+        for (const line of lines) {
+          try {
+            const d = JSON.parse(line);
+            if (d.message?.content) {
+              const txt = d.message.content;
+              rawText += txt;
+              send({ type: 'progress', text: txt });
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } else {
+      send({ type: 'error', message: `Unknown provider for update: ${provider}` });
+      return res.end();
     }
 
-    const data = await r.json();
-    const raw = data.content?.[0]?.text || '';
-    const clean = raw.replace(/```json|```/g, '').trim();
+    notify('\n🧩 Code generated successfully! Validating and applying file patches...');
+
+    function extractJsonArray(text) {
+      let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      const firstIdx = cleaned.indexOf('[');
+      const lastIdx = cleaned.lastIndexOf(']');
+      if (firstIdx !== -1 && lastIdx !== -1 && lastIdx >= firstIdx) {
+        const maybeJson = cleaned.slice(firstIdx, lastIdx + 1);
+        try {
+          const parsed = JSON.parse(maybeJson);
+          if (Array.isArray(parsed)) return parsed;
+        } catch { /* skip */ }
+      }
+      cleaned = cleaned.replace(/```json|```/gi, '').trim();
+      return JSON.parse(cleaned);
+    }
 
     let patches;
-    try { patches = JSON.parse(clean); }
-    catch { return res.status(500).json({ error: 'Could not parse patch JSON from Claude response', raw, backupDir }); }
-    if (!Array.isArray(patches)) {
-      return res.status(500).json({ error: 'Patch response was not an array', raw, backupDir });
+    try {
+      patches = extractJsonArray(rawText);
+    } catch {
+      send({ type: 'error', message: 'Could not parse JSON array of file patches from AI response.\nResponse text was:\n' + rawText });
+      return res.end();
     }
 
-    // Apply patches
+    if (!Array.isArray(patches)) {
+      send({ type: 'error', message: 'AI response parsed successfully but was not a JSON array' });
+      return res.end();
+    }
+
     const applied = [];
     for (const patch of patches) {
       const target = safeResolve(appDir, patch.path);
       if (!target || typeof patch.content !== 'string') {
-        return res.status(500).json({ error: `Unsafe or invalid patch path: ${patch.path}`, backupDir, applied });
+        send({ type: 'error', message: `Unsafe or invalid patch path: ${patch?.path}` });
+        return res.end();
       }
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, patch.content, 'utf8');
       applied.push(patch.path);
     }
 
-    res.json({ ok: true, backupDir, applied, message: `Backup saved to ${backupDir}. ${applied.length} file(s) updated. Reload the page to see changes.` });
+    send({
+      type: 'success',
+      applied,
+      backupDir,
+      message: `Successfully applied ${applied.length} file update(s)! Reload the page to see your evolved application.`
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message, backupDir });
+    send({ type: 'error', message: err.message });
   }
+  res.end();
 });
 
 // -- Serve index for all other routes -----------------------------------------

@@ -393,6 +393,10 @@
       <button id="refresh-btn" onclick="loadModels()" title="Refresh model list">⟳ Refresh</button>
       <button id="system-btn" onclick="openSystemModal()">⚙ System prompt</button>
       <span class="model-count" id="model-count"></span>
+      <!-- Token counter badge -->
+      <div id="token-counter-badge" title="Tokens spent in this conversation (Prompt in / Completion out)" style="margin-left: auto; display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 14px; font-size: 11px; color: var(--text-muted); font-weight: 600;">
+        <span>🏷️</span> <span id="token-count-text">0 tokens</span>
+      </div>
     </div>
 
     <!-- Chat panel -->
@@ -452,10 +456,32 @@
     <div class="panel" id="update-panel">
       <div class="update-section">
         <h2>⚡ Add a Feature</h2>
-        <p style="font-size:12px;color:var(--text-muted)">Describe a feature to add. The app will back up all current files first, then apply your changes using Claude. Reload the page after updating.</p>
-        <div class="warning-box">
-          ⚠️ Requires an <strong>Anthropic API key</strong> in Settings. A backup folder is always created automatically before any changes are made.
+        <p style="font-size:12px;color:var(--text-muted)">Select a capable model and describe a feature to add. The app will back up all current files first, then generate and apply code changes automatically. Reload the page after updating.</p>
+        
+        <!-- Requirement notification box -->
+        <div class="warning-box" style="margin-bottom: 12px; line-height: 1.4;">
+          ⚠️ <strong>Requirement:</strong> Self-updating requires an advanced AI model with a large context window (&gt;30k tokens) and strong structured JSON coding capabilities.<br>
+          <span style="font-size: 11px; color: var(--text-dim);">Only able models are listed below. Unlock more models by adding API keys or Ollama local models in Settings.</span>
         </div>
+
+        <!-- Update Model Selector -->
+        <div class="update-model-box" style="margin-bottom: 16px; display: flex; flex-direction: column; gap: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label for="update-model-select" style="font-size: 13px; font-weight: 600; color: var(--text-color);">Active Evolution AI Model:</label>
+            <label style="font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap;">
+              <input type="checkbox" id="show-all-update-models" onchange="populateUpdateModelSelect()"> Show all
+            </label>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <select id="update-model-select" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-surface); color: var(--text-color); font-size: 13px; cursor: pointer; outline: none;">
+              <option value="" style="background: #1e2030; color: #ffffff;">— Loading advanced AI models... —</option>
+            </select>
+          </div>
+          <div style="font-size: 11px; color: var(--text-dim); margin-top: 2px;">
+            Behind-the-scenes real-time streaming evolution enabled.
+          </div>
+        </div>
+
         <textarea id="feature-input" placeholder="Example: Add a button to copy any message to clipboard. Add dark/light mode toggle. Add markdown rendering for code blocks with syntax highlighting."></textarea>
         <button id="apply-update-btn" onclick="applyUpdate()">
           <span>⚡</span> Apply Update
@@ -542,8 +568,10 @@ function populateModelSelect() {
   const count = document.getElementById('model-count');
   sel.innerHTML = '';
 
+  populateUpdateModelSelect();
+
   if (models.length === 0) {
-    sel.innerHTML = '<option value="">— Add an API key in Settings —</option>';
+    sel.innerHTML = '<option value="" style="background: #1e2030; color: #ffffff;">— Add an API key in Settings —</option>';
     count.textContent = '';
     return;
   }
@@ -556,16 +584,61 @@ function populateModelSelect() {
   for (const [prov, ms] of Object.entries(groups)) {
     const og = document.createElement('optgroup');
     og.label = providerLabel(prov);
+    og.style.background = '#11131d';
+    og.style.color = '#a5b4fc';
+    og.style.fontWeight = '700';
     for (const m of ms) {
       const opt = document.createElement('option');
       opt.value = JSON.stringify({ id: m.id, provider: m.provider });
       opt.textContent = `${m.icon || ''} ${m.name}`;
+      opt.style.background = '#1e2030';
+      opt.style.color = '#ffffff';
+      opt.style.padding = '6px';
+      opt.style.fontWeight = '600';
       og.appendChild(opt);
     }
     sel.appendChild(og);
   }
   count.textContent = `${models.length} model${models.length !== 1 ? 's' : ''}`;
   onModelChange();
+}
+
+function populateUpdateModelSelect() {
+  const sel = document.getElementById('update-model-select');
+  if (!sel) return;
+
+  const showAll = document.getElementById('show-all-update-models')?.checked;
+  const targetModels = showAll ? models : models.filter(m => m.updateCapable);
+  sel.innerHTML = '';
+
+  if (targetModels.length === 0) {
+    sel.innerHTML = '<option value="" style="background: #1e2030; color: #ffffff;">— No capable models available (Add keys in Settings) —</option>';
+    return;
+  }
+
+  const groups = {};
+  for (const m of targetModels) {
+    if (!groups[m.provider]) groups[m.provider] = [];
+    groups[m.provider].push(m);
+  }
+  for (const [prov, ms] of Object.entries(groups)) {
+    const og = document.createElement('optgroup');
+    og.label = providerLabel(prov);
+    og.style.background = '#11131d';
+    og.style.color = '#a5b4fc';
+    og.style.fontWeight = '700';
+    for (const m of ms) {
+      const opt = document.createElement('option');
+      opt.value = JSON.stringify({ id: m.id, provider: m.provider });
+      opt.textContent = `${m.icon || ''} ${m.name}${m.updateCapable ? '' : ' (⚠️ May struggle)'}`;
+      opt.style.background = '#1e2030';
+      opt.style.color = '#ffffff';
+      opt.style.padding = '6px';
+      opt.style.fontWeight = '600';
+      og.appendChild(opt);
+    }
+    sel.appendChild(og);
+  }
 }
 
 function providerLabel(p) {
@@ -673,6 +746,19 @@ function loadConversation(id) {
   const conv = conversations.find(c => c.id === id);
   if (!conv) return;
   renderMessages(conv.messages);
+  updateTokenCounterUI();
+}
+
+function updateTokenCounterUI() {
+  const badge = document.getElementById('token-count-text');
+  if (!badge) return;
+  const conv = conversations.find(c => c.id === currentConvId);
+  if (!conv || !conv.tokenUsage || conv.tokenUsage.total === 0) {
+    badge.textContent = '0 tokens';
+    return;
+  }
+  const { prompt, completion, total } = conv.tokenUsage;
+  badge.textContent = `${total.toLocaleString()} tokens (${prompt.toLocaleString()} in / ${completion.toLocaleString()} out)`;
 }
 
 function deleteConversation(id, e) {
@@ -835,6 +921,14 @@ async function sendMessage() {
             scrollBottom();
             break;
           }
+          if (d.type === 'usage' && d.usage) {
+            if (!conv.tokenUsage) conv.tokenUsage = { prompt: 0, completion: 0, total: 0 };
+            conv.tokenUsage.prompt += (d.usage.promptTokens || 0);
+            conv.tokenUsage.completion += (d.usage.completionTokens || 0);
+            conv.tokenUsage.total += (d.usage.totalTokens || 0);
+            saveConversations();
+            updateTokenCounterUI();
+          }
           if (d.text) {
             assistantText += d.text;
             bubble.innerHTML = formatMd(assistantText);
@@ -867,32 +961,84 @@ async function applyUpdate() {
   const req = document.getElementById('feature-input').value.trim();
   if (!req) { toast('Please describe the feature', 'err'); return; }
 
+  const updateSelVal = document.getElementById('update-model-select').value;
+  if (!updateSelVal) { toast('Please select an AI model to perform the update', 'err'); return; }
+
+  let updateModel = null;
+  try { updateModel = JSON.parse(updateSelVal); } catch { /* ignore */ }
+  if (!updateModel || !updateModel.provider || !updateModel.id) {
+    toast('Invalid update model selected', 'err');
+    return;
+  }
+
   const btn = document.getElementById('apply-update-btn');
   const log = document.getElementById('update-log');
   btn.disabled = true;
   log.style.display = 'block';
-  logMsg('info', '📦 Creating backup of current files...');
+  log.innerHTML = '';
+  logMsg('info', '🚀 Initiating real-time streaming evolution sequence...');
+
+  let progressSpan = null;
 
   try {
     const r = await fetch('/api/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureRequest: req }),
+      body: JSON.stringify({
+        featureRequest: req,
+        provider: updateModel.provider,
+        model: updateModel.id
+      }),
     });
-    if (!r.ok) throw new Error(await apiErrorMessage(r, 'Update failed'));
-    const data = await r.json();
-    if (data.error) {
-      logMsg('err', '❌ Error: ' + data.error);
-      if (data.backupDir) logMsg('info', '📂 Backup was saved to: ' + data.backupDir);
-    } else {
-      logMsg('ok', '✅ Backup saved to: ' + data.backupDir);
-      logMsg('ok', `📝 Files updated (${data.applied.length}):`);
-      for (const f of data.applied) logMsg('info', '   • ' + f);
-      logMsg('ok', '');
-      logMsg('ok', '🔄 ' + data.message);
+    if (!r.ok) throw new Error(await apiErrorMessage(r, 'Update connection failed'));
+    if (!r.body) throw new Error('Update endpoint did not return a stream');
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const d = JSON.parse(line.slice(6));
+          if (d.type === 'info') {
+            progressSpan = null;
+            logMsg('info', '   • ' + d.message);
+          } else if (d.type === 'progress') {
+            if (!progressSpan) {
+              logMsg('info', '   ⚡ Live code generation output:');
+              progressSpan = document.createElement('span');
+              progressSpan.className = 'log-progress';
+              progressSpan.style.color = 'var(--text-color)';
+              progressSpan.style.fontWeight = '500';
+              progressSpan.style.display = 'block';
+              progressSpan.style.paddingLeft = '15px';
+              progressSpan.style.whiteSpace = 'pre-wrap';
+              log.appendChild(progressSpan);
+            }
+            progressSpan.textContent += d.text;
+            if (progressSpan.textContent.length > 600) {
+              progressSpan.textContent = '...' + progressSpan.textContent.slice(-600);
+            }
+            log.scrollTop = log.scrollHeight;
+          } else if (d.type === 'success') {
+            progressSpan = null;
+            logMsg('ok', '\n✅ ' + d.message);
+          } else if (d.type === 'error') {
+            progressSpan = null;
+            logMsg('err', '\n❌ Request failed: ' + d.message);
+          }
+        } catch { /* skip */ }
+      }
     }
   } catch(e) {
-    logMsg('err', '❌ Request failed: ' + e.message);
+    logMsg('err', '\n❌ Network error: ' + e.message);
   }
   btn.disabled = false;
 }

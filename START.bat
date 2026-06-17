@@ -32,6 +32,12 @@ cd /d "%~dp0"
 echo Working directory: %CD%
 echo.
 
+if not exist "node_modules\" (
+    echo Installing dependencies for the first time...
+    call npm install --silent
+    echo.
+)
+
 echo Starting server...
 node server.js
 echo.

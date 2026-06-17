@@ -1,6 +1,4 @@
 {
-  "keys": {
-    "gemini": "ENTER_YOUR_API_KEY"
-  },
+  "keys": {},
   "conversations": []
 }
