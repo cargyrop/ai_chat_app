@@ -1,5 +1,5 @@
 @echo off
-title AI Chat
+title BLACKLINE AI
 
 :: Keep window open on any error
 if "%1"=="" (
@@ -8,7 +8,7 @@ if "%1"=="" (
 )
 
 echo ============================================
-echo   AI Chat - Starting
+echo   BLACKLINE AI - Starting
 echo ============================================
 echo.
 

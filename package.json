@@ -1,7 +1,7 @@
 {
-  "name": "FreedomAI",
+  "name": "blackline-ai",
   "version": "1.0.0",
-  "description": "Local AI Chat — multi-provider, self-updating",
+  "description": "BLACKLINE AI — local multi-provider chat and code evolution",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
