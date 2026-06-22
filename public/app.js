@@ -1,5 +1,5 @@
-/* BLACKLINE AI — app.js v1.2
-   Week 1 Stability Pack
+/* BLACKLINE AI — app.js v1.4.2
+   Stability + safety pack
    - marked.js + highlight.js markdown
    - conversation rename + search filter
    - Enter to send / Shift+Enter newline
@@ -7,7 +7,41 @@
    - model select persistence
    - stop race fix, copy button class toggle
    - a11y improvements
+   - removed dangerous "approval phrase" auto-detector (v1.4.0)
+   - safer data-* attribute payload passing for plan retries (v1.4.0)
+   - token counter labels estimates (v1.4.0)
+   - auto-probe new models in background (v1.4.0)
+   - v1.4.1: CSP regression fixed in server.js
+   - v1.4.2: toast() inlined into app.js (was a separate file that got
+             accidentally deleted during dead-code removal — caused every
+             saveKey/probe call to throw ReferenceError)
 */
+
+/* ── Toast queue (inlined, v1.4.2) ────────────────────────────────────────
+   Previously lived in public/js/toast.js. Inlined here so it can't be
+   accidentally removed again — every other module's code calls toast(),
+   and the file MUST exist for the app to function. */
+let toastQueue = [];
+let toastTimer = null;
+let isToastShowing = false;
+function toast(msg, type) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  toastQueue.push({ msg, type: type || 'ok' });
+  if (!isToastShowing) showNextToast(el);
+}
+function showNextToast(el) {
+  if (!toastQueue.length) { isToastShowing = false; return; }
+  isToastShowing = true;
+  const { msg, type } = toastQueue.shift();
+  el.textContent = msg;
+  el.className = `show ${type || 'ok'}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.className = '';
+    setTimeout(() => showNextToast(el), 130);
+  }, 2700);
+}
 
 /* ── State ──────────────────────────────────────────────────────────────────── */
 let models = [];
@@ -215,12 +249,46 @@ async function loadModels(showToast = false) {
     buildCustomProvidersList();
     checkOllama();
     if (showToast) toast(`Model catalog refreshed: ${models.length} model/status entr${models.length === 1 ? 'y' : 'ies'}`, 'ok');
+    // Kick off background probes for any model that has no probe record yet,
+    // so users no longer have to manually click TEST for every model. v1.4.0.
+    autoProbeMissingModels();
   } catch(e) {
     sel.innerHTML = '<option value="">Error loading models</option>';
     toast('Could not load models: ' + e.message, 'err');
   } finally {
     if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = 'REFRESH MODEL CATALOG'; }
   }
+}
+
+async function autoProbeMissingModels() {
+  // Run probes sequentially in the background for any model that doesn't have
+  // a probe record yet. We skip `disabled` entries (broken connections).
+  const targets = models.filter(m => !m.disabled && !m.probe && !modelProbes[modelKey(m.provider, m.id)]);
+  if (!targets.length) return;
+  toast(`Auto-probing ${targets.length} new model${targets.length === 1 ? '' : 's'} in background…`, 'ok');
+  let done = 0;
+  for (const m of targets) {
+    try {
+      const r = await fetch('/api/models/probe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: m.provider, model: m.id })
+      });
+      if (r.ok) {
+        const result = await r.json();
+        modelProbes[modelKey(m.provider, m.id)] = result;
+        m.probe = result;
+      }
+    } catch {}
+    done++;
+    // Refresh the dropdown periodically so newly-passing models become selectable
+    // as soon as their probe completes.
+    if (done % 3 === 0 || done === targets.length) {
+      populateModelSelect();
+      populateEvolveModelSelect();
+      renderModelCenter();
+    }
+  }
+  toast(`Auto-probe complete (${done} model${done === 1 ? '' : 's'})`, 'ok');
 }
 
 function populateModelSelect(preferredVal) {
@@ -233,8 +301,11 @@ function populateModelSelect(preferredVal) {
 
   const selectableModels = models.filter(isModelSelectable);
   if (selectableModels.length === 0) {
-    sel.innerHTML = '<option value="">— No tested models yet. Use Model Center → TEST —</option>';
-    if (count) count.textContent = models.length ? 'No tested models' : '';
+    const hint = models.length
+      ? '— Models found, but none are tested yet. Open API Keys & Models and click REFRESH. Probes run automatically in the background. —'
+      : '— No models yet. Add an API key in Settings to unlock cloud providers. —';
+    sel.innerHTML = `<option value="">${hint}</option>`;
+    if (count) count.textContent = models.length ? `${models.length} found · 0 tested` : '';
     currentModel = null;
     localStorage.removeItem('currentModel');
     return;
@@ -592,10 +663,18 @@ function updateTokenCounterUI() {
   const conv = conversations.find(c => c.id === currentConvId);
   if (!conv || !conv.tokenUsage || conv.tokenUsage.total === 0) {
     badge.textContent = 'Tokens: 0';
+    badge.title = 'Tokens spent in this conversation (Prompt in / Completion out)';
     return;
   }
-  const { prompt, completion, total } = conv.tokenUsage;
-  badge.textContent = `Tokens: ${total.toLocaleString()} (${prompt.toLocaleString()} in / ${completion.toLocaleString()} out)`;
+  const { prompt, completion, total, estimated } = conv.tokenUsage;
+  // v1.4.0: Surface when counts are an estimate (custom providers that don't
+  // include stream_options.usage), so users aren't misled into thinking the
+  // numbers are exact.
+  const tag = estimated ? ' (est.)' : '';
+  badge.textContent = `Tokens: ${total.toLocaleString()}${tag} (${prompt.toLocaleString()} in / ${completion.toLocaleString()} out)`;
+  badge.title = estimated
+    ? 'Token counts are estimated from text length / 4. The provider did not return exact usage.'
+    : 'Tokens spent in this conversation (Prompt in / Completion out)';
 }
 
 function deleteConversation(id, e) {
@@ -958,10 +1037,13 @@ async function sendMessage(overrideText) {
             break;
           }
           if (d.type === 'usage' && d.usage) {
-            if (!conv.tokenUsage) conv.tokenUsage = { prompt: 0, completion: 0, total: 0 };
+            if (!conv.tokenUsage) conv.tokenUsage = { prompt: 0, completion: 0, total: 0, estimated: false };
             conv.tokenUsage.prompt += (d.usage.promptTokens || 0);
             conv.tokenUsage.completion += (d.usage.completionTokens || 0);
             conv.tokenUsage.total += (d.usage.totalTokens || 0);
+            // Estimated flag is sticky: once any provider returns a heuristic
+            // count, we label the whole conversation estimate for that turn.
+            if (d.usage.estimated) conv.tokenUsage.estimated = true;
             saveConversations();
             updateTokenCounterUI();
           }
@@ -1077,7 +1159,7 @@ RULES:
 3. You CAN create new files, edit existing files, and delete existing files. Do not refuse file creation.
 4. When you propose concrete file changes, output them inside a JSON code block tagged exactly as \`plan. Include an array of objects: { "path": "...", "action": "create|edit|delete", "description": "..." }. Do NOT include full file content in the plan.
 5. CRITICAL: After outputting a plan, STOP. The user will see an inline APPROVE & EXECUTE button in the chat. Explicitly tell them to click it. Do NOT output another plan unless they ask for changes.
-6. If the user says "proceed", "do it", "make the edit", "execute", "go ahead", "yes", or similar approval phrases, and you have already proposed a plan, do NOT plan again. Tell them: "Your plan is ready. Click the APPROVE & EXECUTE button above to execute it."
+6. The user CANNOT execute a plan by typing words like "proceed", "do it", "yes", or "execute" — plans only run when the user clicks the button. If they type those words, remind them to use the button. Do not invent a workflow that relies on text approval.
 7. If a task is impossible, explain why instead of guessing.
 8. Prefer small, focused edit actions. The executor applies existing-file edits as targeted search/replace patches when possible; creates still generate complete new files.`;
 
@@ -1308,8 +1390,17 @@ function renderInvestigationPrompt(failedPayload, appliedPayload) {
   div.innerHTML = `<div class="evolve-msg-bubble">
     <div style="font-weight:700;color:var(--yellow);margin-bottom:8px;">INVESTIGATION REQUIRED</div>
     <div style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:10px;">Some files failed while others were applied.</div>
-    <button class="btn-primary" onclick="requestFailedPlanRetry('${failedPayload}', '${appliedPayload}')">INVESTIGATE FAILED EDITS</button>
+    <button class="btn-primary investigate-btn" type="button">INVESTIGATE FAILED EDITS</button>
   </div>`;
+  // Use data-* attributes + addEventListener instead of interpolating the
+  // payload into an inline onclick attribute. v1.4.0 — the old approach was
+  // unsafe if any path contained a single quote.
+  const btn = div.querySelector('.investigate-btn');
+  if (btn) {
+    btn.dataset.failed = failedPayload;
+    btn.dataset.applied = appliedPayload;
+    btn.addEventListener('click', () => requestFailedPlanRetry(failedPayload, appliedPayload));
+  }
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
@@ -1384,16 +1475,11 @@ async function sendEvolveMessage() {
 
   input.value = ''; autoResize(input);
 
-  const approvalPhrases = ['proceed', 'do it', 'make the edit', 'execute', 'go ahead', 'yes', 'approve', 'please proceed', 'make it', 'implement it'];
-  const lowerText = text.toLowerCase();
-  const pendingPlanIds = Object.keys(window._evolvePlans || {});
-  if (pendingPlanIds.length > 0 && approvalPhrases.some(p => lowerText.includes(p))) {
-    const latestPlanId = pendingPlanIds[pendingPlanIds.length - 1];
-    addEvolveMessage('user', text);
-    addEvolveMessage('assistant', 'Executing your approved plan now…');
-    approvePlan(latestPlanId);
-    return;
-  }
+  // Note: As of v1.4.0, plans are only executed when the user clicks the
+  // explicit APPROVE & EXECUTE button. We no longer auto-execute plans when
+  // the user's typed message happens to contain words like "yes", "proceed",
+  // or "execute" — that pattern was unsafe (e.g. "I do not want to proceed").
+  // The model is told this in the EVOLVE_SYSTEM_PROMPT below.
 
   addEvolveMessage('user', text);
   const modelObj = models.find(m => m.id === model.id && m.provider === model.provider);
@@ -1668,7 +1754,7 @@ function clearCurrentChat() {
   if (!confirm('Clear all messages in this conversation?')) return;
   conv.messages = [];
   conv.title = 'New chat';
-  if (conv.tokenUsage) conv.tokenUsage = { prompt: 0, completion: 0, total: 0 };
+  if (conv.tokenUsage) conv.tokenUsage = { prompt: 0, completion: 0, total: 0, estimated: false };
   saveConversations();
   renderConvList();
   renderMessages(conv.messages);

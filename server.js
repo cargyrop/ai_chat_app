@@ -10,6 +10,8 @@ const PORT = parseInt(process.env.PORT, 10) || 3737;
 const DATA_FILE = path.join(__dirname, 'data', 'config.json');
 const EVOLVE_EXECUTION_TIMEOUT_MS = 15 * 60 * 1000;
 const ALLOWED_PROVIDERS = new Set(['anthropic', 'openai', 'gemini', 'groq', 'openrouter', 'deepseek']);
+const MAX_BACKUPS_TO_KEEP = 5;
+const MAX_PLAN_ITEMS = 25;
 
 // ── Simple in-memory rate limiter ────────────────────────────────────
 const rateLimitBuckets = new Map();
@@ -50,6 +52,15 @@ function securityHeaders(req, res, next) {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '0');
   res.setHeader('Referrer-Policy', 'no-referrer');
+  // CSP note (v1.4.1):
+  //   - `style-src 'unsafe-inline'` is required: the UI uses inline style="" attributes heavily.
+  //   - `script-src 'unsafe-inline'` is ALSO required: index.html uses inline event
+  //     handlers (`onclick="…"`, `onkeydown="…"`, `oninput="…"`) on dozens of elements.
+  //     CSP's `script-src` governs inline event handlers just like it governs inline
+  //     <script> tags — without 'unsafe-inline', every onclick silently fails and the
+  //     UI appears frozen. (This is what v1.4.0 got wrong and v1.4.1 reverts.)
+  //   The proper long-term fix is to refactor the HTML to use addEventListener instead
+  //   of inline handlers, after which 'unsafe-inline' can be removed from script-src.
   res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' https://*.googleapis.com https://*.anthropic.com https://*.openai.com https://*.groq.com https://*.openrouter.ai https://*.deepseek.com http://localhost:11434; img-src 'self' data:;");
   next();
 }
@@ -473,7 +484,7 @@ app.post('/api/models/probe', async (req, res) => {
 
 // -- Health --------------------------------------------------------------------
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, version: '1.2.0', time: new Date().toISOString() });
+  res.json({ ok: true, version: '1.4.2', time: new Date().toISOString() });
 });
 
 // -- Model discovery -----------------------------------------------------------
@@ -815,6 +826,7 @@ app.post("/api/chat", async (req, res) => {
   let completionTokens = 0;
   let assistantAnswer = '';
   let usageReported = false;
+  let usageEstimated = false;
 
   const reportUsageAndFinish = () => {
     if (usageReported) return;
@@ -823,16 +835,19 @@ app.post("/api/chat", async (req, res) => {
     if (promptTokens === 0) {
       const promptText = safeSystemPrompt + ' ' + messages.map(m => m.content).join(' ');
       promptTokens = Math.max(1, Math.round(promptText.length / 4));
+      usageEstimated = true;
     }
     if (completionTokens === 0) {
       completionTokens = Math.max(1, Math.round(assistantAnswer.length / 4));
+      usageEstimated = true;
     }
     send({
       type: 'usage',
       usage: {
         promptTokens,
         completionTokens,
-        totalTokens: promptTokens + completionTokens
+        totalTokens: promptTokens + completionTokens,
+        estimated: usageEstimated
       }
     });
     send({ done: true });
@@ -1155,10 +1170,28 @@ app.get('/api/files', (req, res) => {
 });
 
 // -- Evolve Execute ------------------------------------------------------------
+function cleanupOldBackups(parentDir, appName, currentBackupDir) {
+  try {
+    const entries = fs.readdirSync(parentDir)
+      .filter(name => name.startsWith(`${appName}-backup-`))
+      .map(name => ({ name, full: path.join(parentDir, name), mtime: fs.statSync(path.join(parentDir, name)).mtime }))
+      .sort((a, b) => b.mtime - a.mtime);
+    // Newest is the current backup being created. Keep it + the next N-1.
+    const toDelete = entries.slice(MAX_BACKUPS_TO_KEEP).filter(e => e.full !== currentBackupDir);
+    for (const e of toDelete) {
+      try { fs.rmSync(e.full, { recursive: true, force: true }); } catch {}
+    }
+    return toDelete.length;
+  } catch {
+    return 0;
+  }
+}
+
 app.post('/api/evolve/execute', async (req, res) => {
   const { provider, model, plan } = req.body;
   if (!provider || !model) return res.status(400).json({ error: 'provider and model required' });
   if (!Array.isArray(plan) || plan.length === 0) return res.status(400).json({ error: 'plan must be a non-empty array' });
+  if (plan.length > MAX_PLAN_ITEMS) return res.status(400).json({ error: `Plan is too large (${plan.length} items, max ${MAX_PLAN_ITEMS}). Split it into smaller updates.` });
 
   const cfg = loadConfig();
   const keys = cfg.keys || {};
@@ -1188,7 +1221,8 @@ app.post('/api/evolve/execute', async (req, res) => {
         return !['node_modules', '.git', 'data', '.arena', '.cache'].includes(basename);
       }
     });
-    send({ type: 'backup', dir: backupDir });
+    const pruned = cleanupOldBackups(parentDir, appName, backupDir);
+    send({ type: 'backup', dir: backupDir, prunedOldBackups: pruned });
   } catch (err) {
     send({ type: 'error', message: 'Backup failed: ' + err.message });
     return res.end();
@@ -1550,29 +1584,7 @@ app.listen(PORT, () => {
   }
 });
 
-/* ── Vision helper (Phase 2) ──────────────────────────────────────────────── */
-function attachVisionContent(messages, images = []) {
-  if (!images.length) return messages;
-
-  return messages.map((msg, index) => {
-    if (index !== messages.length - 1 || msg.role !== 'user') return msg;
-
-    const parts = [];
-    if (typeof msg.content === 'string' && msg.content.trim()) {
-      parts.push({ type: 'text', text: msg.content });
-    }
-
-    for (const img of images) {
-      parts.push({
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: img.mime || 'image/jpeg',
-          data: img.data
-        }
-      });
-    }
-
-    return { ...msg, content: parts.length > 1 ? parts : msg.content };
-  });
-}
+// attachVisionContent() was removed in v1.4.0 — it was never called from any
+// route and there was no client-side upload UI. If you want vision support,
+// it should be designed deliberately (multipart uploads, file storage policy,
+// UI for previewing, etc.) rather than retrofitted onto the current shape.

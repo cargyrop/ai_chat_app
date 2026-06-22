@@ -1,4 +1,4 @@
-/* ── BLACKLINE AI — Technopunk Theme v1.2 ─────────────────────────────── */
+/* ── BLACKLINE AI — Technopunk Theme v1.4.2 ─────────────────────────────── */
 /* ======================================================================== */
 
 :root {
@@ -896,30 +896,3 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); }
-
-/* ── Mobile Drawer Enhancements (Phase 2) ─────────────────────────────────── */
-@media (max-width: 680px) {
-  #sidebar {
-    position: fixed !important;
-    top: 0; left: 0; bottom: 0;
-    width: 82% !important;
-    max-width: 300px;
-    height: 100vh !important;
-    max-height: none !important;
-    border-right: 1px solid var(--border);
-    border-bottom: none;
-    z-index: 260;
-    transform: translateX(-100%);
-    box-shadow: 4px 0 20px rgba(0,0,0,0.5);
-  }
-
-  #conversations {
-    display: flex !important;
-    max-height: none !important;
-    flex: 1;
-  }
-
-  #mobile-drawer-toggle {
-    display: flex;
-  }
-}

@@ -1,6 +1,6 @@
 {
   "name": "blackline-ai",
-  "version": "1.3.0",
+  "version": "1.4.2",
   "description": "BLACKLINE AI — local multi-provider chat and code evolution with self-modification",
   "main": "server.js",
   "scripts": {
