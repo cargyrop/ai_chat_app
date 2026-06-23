@@ -7,7 +7,6 @@ its own codebase — under your explicit approval.
 Runs entirely on your machine. Your API keys never leave your computer (sent only
 to the respective provider's API).
 
-> **Current version: v1.4.2** — see [`FIXES.md`](FIXES.md) for what changed.
 
 ---
 
