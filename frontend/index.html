@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark" />
+<meta name="description" content="ARKEL — The intelligence gateway beyond the human layer. Local-first multi-provider AI workspace for model interaction, engineering, and future agentic workflows." />
+<meta name="theme-color" content="#050608" />
+<title>ARKEL</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='6' fill='%23050608'/%3E%3Crect x='10' y='10' width='44' height='44' fill='none' stroke='%2300f0ff' stroke-width='2'/%3E%3Crect x='20' y='26' width='24' height='12' fill='%2300f0ff'/%3E%3C/svg%3E" />
+<link rel="manifest" href="/manifest.json">
+<link rel="stylesheet" href="/base.css" />
+<link rel="stylesheet" href="/chat.css" />
+<link rel="stylesheet" href="/settings.css" />
+<link rel="stylesheet" href="/evolve.css" />
+<link rel="stylesheet" href="/components.css" />
+<link rel="stylesheet" href="/vendor/highlight-github-dark.min.css">
+<script src="/vendor/highlight.min.js"></script>
+<script src="/vendor/marked.min.js"></script>
+</head>
+<body>
+
+<div id="app">
+  <aside id="sidebar" aria-label="Conversations">
+    <div id="sidebar-header">
+      <span class="logo" aria-label="ARKEL logo">
+        <svg viewBox="0 0 64 64" role="img" aria-hidden="true">
+          <rect x="8" y="8" width="48" height="48" fill="none" stroke="currentColor" stroke-width="2" />
+          <rect x="18" y="24" width="28" height="16" fill="currentColor" />
+          <rect x="14" y="31" width="36" height="3" fill="var(--bg)" />
+        </svg>
+      </span>
+      <div>
+        <h1>ARKEL</h1>
+      </div>
+    </div>
+    <nav id="sidebar-nav" aria-label="Main navigation">
+      <button class="nav-btn active" data-panel="chat" data-action="show-panel">
+        <span class="icon" aria-hidden="true">◧</span> Engage
+      </button>
+      <button class="nav-btn" data-panel="settings" data-action="show-panel">
+        <span class="icon" aria-hidden="true">◫</span> Model Hub
+      </button>
+      <button class="nav-btn" data-panel="roles" data-action="show-panel">
+        <span class="icon" aria-hidden="true">◬</span> Role Matrix
+      </button>
+      <button class="nav-btn" data-panel="evolve" data-action="show-panel">
+        <span class="icon" aria-hidden="true">⬡</span> Evolve App
+      </button>
+    </nav>
+    <div id="conversations">
+      <h3>Conversations</h3>
+      <div class="conv-search-wrap">
+        <input type="text" id="conv-search" placeholder="Filter…" aria-label="Filter conversations">
+        <button class="conv-search-clear" id="conv-search-clear" aria-label="Clear filter" title="Clear">×</button>
+      </div>
+      <div id="conv-list" role="list"></div>
+    </div>
+    <button id="new-chat-btn">+ New chat</button>
+  </aside>
+
+  <main id="main">
+    <div id="toolbar">
+      <span class="model-count" id="model-count" aria-live="polite"></span>
+      <div id="token-counter-badge" class="token-badge" title="Tokens spent in this conversation (Prompt in / Completion out)">
+        <span id="token-count-text">Tokens: 0</span>
+      </div>
+    </div>
+
+    <div class="panel visible" id="chat-panel" role="region" aria-label="Engage">
+      <div id="engage-panel-bar"></div>
+      <div id="engage-panel-host">
+        <!-- Floating panels appear here. The host is the workspace area. -->
+      </div>
+    </div>
+
+    <div class="panel" id="settings-panel" role="region" aria-label="Settings">
+      <div id="keys-list"></div>
+      <div id="custom-providers-list"></div>
+
+      <div class="settings-section endpoint-section">
+        <h2>Add Models (Endpoints) <span class="endpoint-sub">Connect local models first, or add a remote API.</span></h2>
+
+        <div class="endpoint-box local-box" id="test-local-endpoint-box" role="button" tabindex="0">
+          <div class="endpoint-box-header">
+            <span class="endpoint-icon">▪</span>
+            <span class="endpoint-title">LOCAL HOST (OLLAMA / SERVER)</span>
+            <span class="endpoint-arrow">›</span>
+          </div>
+        </div>
+
+        <div class="endpoint-box api-box expanded">
+          <div class="endpoint-box-header">
+            <span class="endpoint-icon">⬡</span>
+            <span class="endpoint-title">REMOTE API ENDPOINTS</span>
+            <span class="endpoint-arrow chevron">˅</span>
+          </div>
+          <div class="endpoint-box-content">
+            <div class="endpoint-row">
+              <input type="text" id="endpoint-url" class="endpoint-input url-input" value="https://openrouter.ai/api/v1" placeholder="Connect local models first, or add a remote API." />
+              <select id="endpoint-provider" class="endpoint-select provider-select">
+                <option value="openrouter" data-url="https://openrouter.ai/api/v1">OpenRouter</option>
+                <option value="anthropic" data-url="https://api.anthropic.com">Anthropic</option>
+                <option value="openai" data-url="https://api.openai.com/v1">OpenAI</option>
+                <option value="gemini" data-url="https://generativelanguage.googleapis.com/v1beta">Google Gemini</option>
+                <option value="groq" data-url="https://api.groq.com/openai/v1">Groq</option>
+                <option value="deepseek" data-url="https://api.deepseek.com">DeepSeek</option>
+                <option value="kimi" data-url="https://api.moonshot.ai/v1">Kimi (Moonshot)</option>
+                <option value="qwen" data-url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1">Qwen (DashScope)</option>
+                <option value="mistral" data-url="https://api.mistral.ai/v1">Mistral</option>
+                <option value="together" data-url="https://api.together.xyz/v1">Together AI</option>
+                <option value="fireworks" data-url="https://api.fireworks.ai/inference/v1">Fireworks AI</option>
+                <option value="xai" data-url="https://api.x.ai/v1">xAI (Grok)</option>
+                <option value="custom" data-url="https://">Custom Endpoint</option>
+              </select>
+            </div>
+            <div class="endpoint-row mt-10">
+              <input type="password" id="endpoint-key" class="endpoint-input key-input" placeholder="••••••••••••••••••••••••••••••••" />
+              <button id="endpoint-test-btn" class="btn-endpoint test">TEST</button>
+              <button id="endpoint-add-btn" class="btn-endpoint add" disabled>ADD</button>
+            </div>
+            <div id="endpoint-status-line" class="endpoint-status-line mt-10">
+              <span class="status-offline">OFFLINE</span> — enter API key and click Test to discover models
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section master-catalog-section">
+        <div class="master-catalog-header">
+          <div>
+            <h2>Model Center & Active Endpoints</h2>
+            <p>All discovered models from your active endpoints. Tick checkboxes on the left to instantly enable/disable models in Chat and Evolve.</p>
+          </div>
+          <div class="master-catalog-toolbar">
+            <button class="btn-secondary" id="refresh-catalog-btn">REFRESH CATALOG</button>
+          </div>
+        </div>
+
+        <div class="catalog-bulk-bar">
+          <span id="catalog-counts-hint" class="catalog-counts-hint"></span>
+        </div>
+
+        <div id="model-center-list" class="model-center-list master-table-wrap"></div>
+      </div>
+
+      <div class="settings-section">
+        <h2>Data Backup & Restore</h2>
+        <p>Save your local conversations, system prompt, selected model, Evolve chat, and Evolve layout to a JSON backup file. API keys are intentionally excluded for security and remain only in <code class="accent-code">data/config.json</code>.</p>
+        <div class="inline-flex-gap">
+          <button class="btn-primary" id="export-all-data-btn">EXPORT All Data</button>
+          <label class="btn-secondary file-label">
+            <input type="file" id="import-data-file" accept=".json">
+            <span>IMPORT Data</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="roles-panel" role="region" aria-label="Role Matrix">
+      <div class="settings-section role-matrix-section">
+        <div class="master-catalog-header">
+          <div>
+            <h2>Role Matrix</h2>
+            <p>Assign enabled models to Evolve roles. ARKEL auto-recommends models from Chat/Text and Code/WebDev ELOs, but you can use the same enabled model for multiple roles.</p>
+          </div>
+          <div class="master-catalog-toolbar">
+            <button class="btn-secondary" id="auto-assign-roles-btn">AUTO ASSIGN BEST</button>
+            <button class="btn-secondary" id="clear-roles-btn">CLEAR ROLES</button>
+          </div>
+        </div>
+        <div id="role-matrix-list" class="role-matrix-list"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="evolve-panel" role="region" aria-label="Evolve App">
+      <div class="evolve-layout">
+        <div class="evolve-left">
+          <div class="evolve-chat-header">
+            <div class="evolve-chat-title">
+              <h2>⬡ EVOLVE APP</h2>
+              <span class="evolve-subtitle">Discuss the codebase, plan changes, and approve updates</span>
+            </div>
+            <div class="evolve-header-actions">
+              <button id="clear-evolve-chat-btn" title="Clear Evolve conversation and start a new update thread">New Update</button>
+            </div>
+          </div>
+          <div id="evolve-messages" class="evolve-messages" role="log" aria-live="polite">
+            <div class="evolve-empty-state" id="evolve-empty-state">
+              <div class="hero" aria-hidden="true">⬡</div>
+              <h3>Plan safe app improvements</h3>
+              <p>Assign Planner and Executor in Role Matrix, describe one clear change, review the generated plan, then approve it to execute.</p>
+            </div>
+          </div>
+          <div class="evolve-input-area">
+            <div class="evolve-role-bar" id="evolve-role-summary">
+              Role Matrix controls which models Evolve uses. Open Role Matrix to assign Planner and Executor.
+            </div>
+            <select id="evolve-model-select" aria-label="Planner role model"></select>
+            <input type="checkbox" id="show-all-evolve-models" aria-hidden="true">
+            <div class="evolve-input-row">
+              <label class="sr-only" for="evolve-input">Evolve message</label>
+              <textarea id="evolve-input" rows="1" placeholder="Ask about the codebase or request a feature… (Enter to send, Shift+Enter for newline)"></textarea>
+              <button id="evolve-send-btn" class="evolve-send-btn" title="Send (Enter)">Send <span aria-hidden="true" class="icon-send-arrow">↑</span></button>
+              <button id="evolve-stop-btn" class="evolve-stop-btn" title="Stop generating">Stop <span aria-hidden="true" class="icon-stop-mark">■</span></button>
+            </div>
+            <div class="evolve-input-meta">
+              <span class="kbd">Enter</span><span>to send · Shift+Enter for newline</span>
+            </div>
+          </div>
+        </div>
+        <div id="evolve-resizer" class="evolve-resizer" title="Drag to resize codebase panel" aria-hidden="true"></div>
+        <div class="evolve-right">
+          <div class="evolve-section codebase-section">
+            <h3 class="evolve-section-header">
+              <span>CODEBASE</span>
+              <button class="evolve-mini-btn" id="refresh-file-tree-btn" title="Refresh codebase tree">REFRESH</button>
+            </h3>
+            <div id="evolve-file-tree" class="evolve-file-tree" role="tree"></div>
+            <div id="evolve-file-viewer" class="evolve-file-viewer" role="region" aria-label="File viewer">
+              <div id="evolve-file-viewer-title" class="evolve-file-viewer-title"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="system-modal-title">
+  <div id="system-modal" role="document">
+    <h3 id="system-modal-title">SYSTEM PROMPT</h3>
+    <p>Sets the AI's persona or instructions for this conversation. Applied to new conversations.</p>
+    <label class="sr-only" for="system-prompt-input">System prompt</label>
+    <textarea id="system-prompt-input" placeholder="You are a helpful assistant..."></textarea>
+    <div class="modal-btns">
+      <button class="btn-secondary" id="close-system-modal-btn">Cancel</button>
+      <button class="btn-primary" id="save-system-prompt-btn">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="model-info-overlay" role="dialog" aria-modal="true" aria-labelledby="model-info-title">
+  <div id="model-info-modal" role="document">
+    <div class="model-info-header">
+      <h3 id="model-info-title">MODEL INFO</h3>
+      <button class="btn-secondary" id="close-model-info-btn">Close</button>
+    </div>
+    <div id="model-info-content"></div>
+  </div>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="/modules/core.js"></script>
+<script src="/modules/state.js"></script>
+<script src="/modules/toast.js"></script>
+<script src="/modules/markdown.js"></script>
+<script src="/modules/chat_render.js"></script>
+<script src="/modules/conversations.js"></script>
+<script src="/modules/models_helpers.js"></script>
+<script src="/modules/models_actions.js"></script>
+<script src="/modules/models_center.js"></script>
+<script src="/modules/models_select.js"></script>
+<script src="/modules/floating_panels.js"></script>
+<script src="/modules/floating_chat.js"></script>
+<script src="/modules/panels.js"></script>
+<script src="/modules/settings.js"></script>
+<script src="/modules/model_roles.js"></script>
+<script src="/modules/chat_send.js"></script>
+<script src="/modules/chat_actions.js"></script>
+<script src="/modules/evolve_tree.js"></script>
+<script src="/modules/evolve_messages.js"></script>
+<script src="/modules/evolve_plan.js"></script>
+<script src="/modules/evolve_send.js"></script>
+<script src="/modules/data.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

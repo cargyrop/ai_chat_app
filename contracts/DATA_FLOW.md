@@ -1,0 +1,132 @@
+# Data Flow Diagrams
+
+## Chat Flow
+
+```
+┌──────────┐  keydown   ┌──────────────┐  POST /api/chat  ┌──────────────┐
+│ msg-input│───────────→│ chat_send.js │─────────────────→│ routes/chat  │
+│          │  Enter     │ sendMessage  │                  │     .js      │
+└──────────┘            └──────────────┘                  └──────┬───────┘
+                                                                  │
+                                                                  ▼
+                                                           ┌──────────────┐
+                                                           │ chatProxy.js │
+                                                           │  streamChat  │
+                                                           └──────┬───────┘
+                                                                  │
+                                                                  │ fetch
+                                                                  ▼
+                                                           ┌──────────────┐
+                                                           │  AI Provider │
+                                                           │   (SSE)      │
+                                                           └──────┬───────┘
+                                                                  │
+                                                                  │ SSE chunks
+                                                                  ▼
+                                                           ┌──────────────┐
+                                                           │ chat_send.js │
+                                                           │ appendMessage│
+                                                           │  (streaming) │
+                                                           └──────┬───────┘
+                                                                  │
+                                                                  │ render
+                                                                  ▼
+                                                           ┌──────────────┐
+                                                           │chat_render.js│
+                                                           │renderMessages│
+                                                           └──────┬───────┘
+                                                                  │
+                                                                  │ innerHTML
+                                                                  ▼
+                                                           ┌──────────────┐
+                                                           │  #messages   │
+                                                           │   (DOM)      │
+                                                           └──────────────┘
+```
+
+## Evolve Flow
+
+```
+┌──────────┐  keydown   ┌──────────────┐  POST /api/evolve/execute ┌──────────────┐
+│evolve-inp│───────────→│evolve_send.js│──────────────────────────→│routes/evolve │
+│          │  Enter     │sendEvolveMsg │                            │     .js      │
+└──────────┘            └──────────────┘                            └──────┬───────┘
+       ▲                                                                   │
+       │                                                                   ▼
+       │                                                            ┌──────────────┐
+       │                                                            │evolveEngine.js│
+       │                                                            │ executePlan  │
+       │                                                            └──────┬───────┘
+       │                                                                   │
+       │                            ┌──────────────┐                     │
+       │                            │  AI Provider │←────── prompt ──────┘
+       │                            │   (SSE)      │       (code gen)
+       │                            └──────┬───────┘
+       │                                   │
+       │                                   │ SSE chunks
+       │                                   ▼
+       │                            ┌──────────────┐
+       │                            │evolve_send.js│
+       │                            │  (streaming) │
+       │                            └──────┬───────┘
+       │                                   │
+       │                                   │ render
+       │                                   ▼
+       │                            ┌──────────────┐
+       │                            │evolve_messages│
+       │                            │renderEvolveMsgs│
+       │                            └──────┬───────┘
+       │                                   │
+       │                                   │ innerHTML
+       │                                   ▼
+       │                            ┌──────────────┐
+       │                            │#evolve-messages│
+       │                            │   (DOM)      │
+       │                            └──────────────┘
+       │
+       └────────── Approve button clicked ←── [evolve_plan.js] renders inline button
+```
+
+## Model Discovery Flow
+
+```
+User clicks "Refresh" → [models.js] loadModels()
+                              │
+                              ├──→ GET /api/models
+                              │         │
+                              │         ▼
+                              │    [routes/models.js]
+                              │         │
+                              │         ▼
+                              │    [modelDiscovery.js] discoverModels()
+                              │         │
+                              │         ├──→ fetch Anthropic models
+                              │         ├──→ fetch OpenAI models
+                              │         ├──→ fetch Gemini models
+                              │         ├──→ fetch Groq models
+                              │         ├──→ fetch OpenRouter models
+                              │         ├──→ fetch DeepSeek models
+                              │         ├──→ fetch custom providers
+                              │         └──→ fetch Ollama (localhost)
+                              │
+                              ▼
+                         [models.js] populateModelSelect()
+                              │
+                              ▼
+                         DOM: #model-select
+```
+
+## State Persistence Flow
+
+```
+Any module mutates state
+        │
+        ▼
+   [state.js] variable updated
+        │
+        ├───→ saveConversations() ──→ localStorage.setItem('conversations', JSON)
+        ├───→ saveEvolveMessages() ──→ localStorage.setItem('evolveMessages', JSON)
+        ├───→ localStorage.setItem('systemPrompt', ...)
+        ├───→ localStorage.setItem('currentModel', JSON)
+        └───→ localStorage.setItem('evolveLeftWidthPct', ...)
+```
